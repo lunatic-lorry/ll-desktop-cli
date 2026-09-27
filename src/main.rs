@@ -2,7 +2,13 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use flags2env::BundledFlags2Env;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::HashMap, env, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    net::IpAddr,
+    path::PathBuf,
+    time::Duration,
+};
 use uuid::Uuid;
 
 #[allow(non_snake_case)]
@@ -39,7 +45,10 @@ async fn run() -> Result<()> {
     let argv = env::args().collect::<Vec<_>>();
     let parsed = parser.parse_structured(&argv, Some(config_path_text))?;
     if !parsed.unknown_options.is_empty() {
-        bail!("unknown command-line options: {}", parsed.unknown_options.len());
+        bail!(
+            "unknown command-line options: {}",
+            parsed.unknown_options.len()
+        );
     }
     if !parsed.errors.is_empty() {
         bail!("invalid command-line values: {}", parsed.errors.join("; "));
@@ -57,6 +66,7 @@ async fn run() -> Result<()> {
         .ok()
         .filter(|value| *value > 0 && *value <= 1_200_000)
         .ok_or_else(|| anyhow!("--timeout must be between 1 and 1200000 ms"))?;
+    let daemon_url = validate_daemon_url(&config.LL_DESKTOP_DAEMON_URL)?;
     let token = read_token()?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms.saturating_add(2_000)))
@@ -65,7 +75,7 @@ async fn run() -> Result<()> {
     match command {
         "status" => {
             let response = client
-                .get(format!("{}/v1/status", trim_url(&config.LL_DESKTOP_DAEMON_URL)))
+                .get(format!("{daemon_url}/v1/status"))
                 .bearer_auth(&token)
                 .send()
                 .await?;
@@ -83,7 +93,7 @@ async fn run() -> Result<()> {
                 "timeout_ms": timeout_ms,
             });
             let response = client
-                .post(format!("{}/v1/invoke", trim_url(&config.LL_DESKTOP_DAEMON_URL)))
+                .post(format!("{daemon_url}/v1/invoke"))
                 .bearer_auth(&token)
                 .json(&body)
                 .send()
@@ -115,8 +125,30 @@ fn required(value: Option<String>, flag: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("{flag} is required"));
 }
 
-fn trim_url(value: &str) -> &str {
-    return value.trim_end_matches('/');
+fn validate_daemon_url(value: &str) -> Result<String> {
+    let url = reqwest::Url::parse(value).context("daemon URL is invalid")?;
+    if url.scheme() != "http" {
+        bail!("daemon URL must use http on loopback");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("daemon URL must not contain credentials");
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        bail!("daemon URL must not contain query or fragment components");
+    }
+    if url.path() != "/" && !url.path().is_empty() {
+        bail!("daemon URL must be an origin without a path");
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("daemon URL must include a host"))?;
+    let ip = host
+        .parse::<IpAddr>()
+        .context("daemon URL host must be a numeric loopback address")?;
+    if !ip.is_loopback() {
+        bail!("daemon URL host must be loopback");
+    }
+    return Ok(value.trim_end_matches('/').to_owned());
 }
 
 fn resolve_config_path() -> Result<PathBuf> {
@@ -158,4 +190,30 @@ fn read_token() -> Result<String> {
         bail!("daemon token is invalid");
     }
     return Ok(token.to_owned());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_daemon_url;
+
+    #[test]
+    fn accepts_numeric_loopback_origins() {
+        assert_eq!(
+            validate_daemon_url("http://127.0.0.1:8763").as_deref(),
+            Ok("http://127.0.0.1:8763")
+        );
+        assert_eq!(
+            validate_daemon_url("http://[::1]:8763/").as_deref(),
+            Ok("http://[::1]:8763")
+        );
+    }
+
+    #[test]
+    fn rejects_non_loopback_or_credentialed_origins() {
+        assert!(validate_daemon_url("https://127.0.0.1:8763").is_err());
+        assert!(validate_daemon_url("http://192.0.2.10:8763").is_err());
+        assert!(validate_daemon_url("http://localhost:8763").is_err());
+        assert!(validate_daemon_url("http://user:secret@127.0.0.1:8763").is_err());
+        assert!(validate_daemon_url("http://127.0.0.1:8763/path").is_err());
+    }
 }
