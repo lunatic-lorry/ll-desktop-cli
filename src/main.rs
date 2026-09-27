@@ -3,7 +3,13 @@ use flags2env::BundledFlags2Env;
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::HashMap, env, net::IpAddr, path::{Path, PathBuf}, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    net::IpAddr,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use uuid::Uuid;
 
 const MAX_TIMEOUT_MS: u64 = 20 * 60 * 1_000;
@@ -137,7 +143,9 @@ async fn print_response(response: reqwest::Response) -> Result<()> {
 }
 
 fn endpoint(base: &Url, path: &str) -> Result<Url> {
-    return base.join(path).context("cannot build local daemon endpoint");
+    return base
+        .join(path)
+        .context("cannot build local daemon endpoint");
 }
 
 fn validate_loopback_url(raw: &str) -> Result<Url> {
