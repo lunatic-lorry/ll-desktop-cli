@@ -1,0 +1,61 @@
+[help]
+url = "https://github.com/lunatic-lorry/ll-desktop-cli"
+columns = ["options", "env", "type", "default", "description"]
+
+[parse]
+stop_at_first_positional = false
+allow_unknown = false
+
+[env]
+ignore = ["LL_DESKTOP_TOKEN"]
+
+[commands.status]
+help = "Show local Lunatic-Lorry daemon status."
+
+[commands.doctor]
+help = "Show local daemon diagnostics and runtime counters."
+
+[commands.invoke]
+help = "Invoke a local deployment through ll-desktop-daemon."
+
+[commands.invoke.flags.tenant]
+env = "LL_DESKTOP_TENANT_ID"
+aliases = ["tenant"]
+type = "string"
+help = "Tenant id for the local invocation."
+
+[commands.invoke.flags.deployment]
+env = "LL_DESKTOP_DEPLOYMENT_ID"
+aliases = ["deployment"]
+type = "string"
+help = "Immutable deployment generation id."
+
+[commands.invoke.flags.payload]
+env = "LL_DESKTOP_PAYLOAD"
+aliases = ["payload"]
+short = "p"
+type = "json"
+default = "{}"
+help = "JSON invocation payload."
+
+[flags.url]
+env = "LL_DESKTOP_DAEMON_URL"
+aliases = ["url"]
+short = "u"
+type = "string"
+default = "http://127.0.0.1:8763"
+help = "Loopback URL of ll-desktop-daemon."
+
+[flags.timeout]
+env = "LL_DESKTOP_TIMEOUT_MS"
+aliases = ["timeout"]
+short = "t"
+type = "integer"
+default = 30000
+help = "Invocation timeout in milliseconds."
+
+[flags.token-file]
+env = "LL_DESKTOP_TOKEN_FILE"
+aliases = ["token-file"]
+type = "string"
+help = "Path to the local daemon bearer-token file; defaults to ~/.lunatic-lorry/daemon/token."
