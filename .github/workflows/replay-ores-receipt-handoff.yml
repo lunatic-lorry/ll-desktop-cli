@@ -1,0 +1,36 @@
+name: replay-ores-receipt-handoff
+
+on:
+  push:
+    branches:
+      - feature/ores-receipt-handoff-v2-20260928
+
+permissions:
+  contents: write
+
+jobs:
+  replay:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature/ores-receipt-handoff-v2-20260928
+      - name: Replay tested receipt validation diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feature/forward-ores-wasm-receipt-20260928
+          git diff 25fc10f8c810862aec45e9cc4945f6a9f4a1d2d3..origin/feature/forward-ores-wasm-receipt-20260928 -- .cli-flags.toml src/main.rs src/ores_evidence.rs > /tmp/feature.patch
+          test -s /tmp/feature.patch
+          git apply --3way --index /tmp/feature.patch
+          cargo fmt --all
+          cargo test --all-targets
+          cargo clippy --all-targets -- -D warnings
+          git add .cli-flags.toml src/main.rs src/ores_evidence.rs
+          git rm .github/workflows/replay-ores-receipt-handoff.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'feat: verify and forward ORES WASM artifact receipts'
+          git push origin HEAD:feature/ores-receipt-handoff-v2-20260928
