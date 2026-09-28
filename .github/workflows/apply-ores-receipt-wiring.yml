@@ -1,0 +1,36 @@
+name: apply-ores-receipt-wiring
+
+on:
+  push:
+    branches:
+      - feature/forward-ores-wasm-receipt-20260928
+    paths:
+      - tools/wire_ores_receipt.py
+      - .github/workflows/apply-ores-receipt-wiring.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/forward-ores-wasm-receipt-20260928
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply, format, and remove helper
+        run: |
+          python3 tools/wire_ores_receipt.py
+          cargo fmt --all
+          git diff --check
+          git rm tools/wire_ores_receipt.py .github/workflows/apply-ores-receipt-wiring.yml
+          git config user.name ORESoftware
+          git config user.email alex@oresoftware.com
+          git add src/main.rs src/ores_evidence.rs .cli-flags.toml
+          git commit -m 'feat: forward exact ORES WASM build evidence'
+          git push origin HEAD:feature/forward-ores-wasm-receipt-20260928
