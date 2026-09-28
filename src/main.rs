@@ -124,8 +124,8 @@ async fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
         "invoke" => {
-            let tenant_id = required(config.LL_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id = required(config.LL_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let tenant_id = validated_id(config.LL_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = validated_id(config.LL_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let body = json!({
                 "invocation_id": Uuid::new_v4().to_string(),
                 "tenant_id": tenant_id,
@@ -292,4 +292,52 @@ fn read_token() -> Result<String> {
         bail!("daemon token is invalid");
     }
     return Ok(token.to_owned());
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_url_rejects_remote_plaintext_and_embedded_credentials() -> Result<()> {
+        assert_eq!(
+            validate_daemon_url("http://127.0.0.1:8763")?,
+            "http://127.0.0.1:8763"
+        );
+        assert!(validate_daemon_url("http://example.com:8763").is_err());
+        assert!(validate_daemon_url("https://user:pass@example.com").is_err());
+        assert!(validate_daemon_url("https://example.com/api").is_err());
+        return Ok(());
+    }
+
+    #[test]
+    fn identifiers_reject_path_traversal() -> Result<()> {
+        assert_eq!(
+            validated_id(Some("tenant-1.alpha".to_owned()), "--tenant")?,
+            "tenant-1.alpha"
+        );
+        assert!(validated_id(Some("../escape".to_owned()), "--tenant").is_err());
+        assert!(validated_id(Some("a/b".to_owned()), "--tenant").is_err());
+        return Ok(());
+    }
+
+    #[test]
+    fn ores_adapter_is_bounded_json_object() -> Result<()> {
+        let value = parse_ores_adapter_bytes(
+            br#"{"schema_version":"ores.lambda.adapter/v1","provider":"lunatic_lorry"}"#,
+        )?;
+        assert_eq!(value["provider"], "lunatic_lorry");
+        assert!(parse_ores_adapter_bytes(b"[]").is_err());
+        assert!(parse_ores_adapter_bytes(b"").is_err());
+        return Ok(());
+    }
+
+    #[test]
+    fn module_digest_is_lowercase_sha256() {
+        let digest = format!("{:x}", Sha256::digest(b"lunatic-lorry"));
+        assert_eq!(digest.len(), 64);
+        assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(digest, digest.to_ascii_lowercase());
+    }
 }
