@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flags2env::BundledFlags2Env;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -12,6 +13,8 @@ struct CliConfig {
     LL_DESKTOP_TIMEOUT_MS: i64,
     LL_DESKTOP_TENANT_ID: Option<String>,
     LL_DESKTOP_DEPLOYMENT_ID: Option<String>,
+    LL_DESKTOP_MODULE: Option<String>,
+    LL_DESKTOP_ORES_ADAPTER: Option<String>,
     LL_DESKTOP_PAYLOAD: Option<Value>,
     FLAGS2ENV_COMMAND: Option<String>,
 }
@@ -77,6 +80,39 @@ async fn run() -> Result<()> {
                 .await?;
             print_response(response).await?;
         }
+        "deploy" => {
+            let tenant_id = required(config.LL_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = required(config.LL_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let module_path = required(config.LL_DESKTOP_MODULE, "--module")?;
+            let module = tokio::fs::read(&module_path)
+                .await
+                .with_context(|| format!("cannot read module at {module_path}"))?;
+            let ores_adapter = match config.LL_DESKTOP_ORES_ADAPTER {
+                Some(path) if !path.trim().is_empty() => {
+                    let bytes = tokio::fs::read(&path)
+                        .await
+                        .with_context(|| format!("cannot read ORES adapter at {path}"))?;
+                    Some(
+                        serde_json::from_slice::<Value>(&bytes)
+                            .with_context(|| format!("ORES adapter at {path} is not JSON"))?,
+                    )
+                }
+                _ => None,
+            };
+            let body = json!({
+                "tenant_id": tenant_id,
+                "deployment_id": deployment_id,
+                "wasm_base64": BASE64.encode(module),
+                "ores_adapter": ores_adapter,
+            });
+            let response = client
+                .post(format!("{base}/v1/deploy"))
+                .bearer_auth(&token)
+                .json(&body)
+                .send()
+                .await?;
+            print_response(response).await?;
+        }
         "invoke" => {
             let tenant_id = required(config.LL_DESKTOP_TENANT_ID, "--tenant")?;
             let deployment_id = required(config.LL_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
@@ -96,7 +132,7 @@ async fn run() -> Result<()> {
             print_response(response).await?;
         }
         _ => {
-            bail!("command required: status or invoke");
+            bail!("command required: status, deploy, or invoke");
         }
     }
     return Ok(());

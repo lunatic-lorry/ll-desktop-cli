@@ -12,6 +12,33 @@ ignore = ["LL_DESKTOP_TOKEN_FILE"]
 [commands.status]
 help = "Show Lunatic Lorry local daemon status."
 
+[commands.deploy]
+help = "Deploy one immutable Lunatic WebAssembly module to the local daemon."
+
+[commands.deploy.flags.tenant]
+env = "LL_DESKTOP_TENANT_ID"
+aliases = ["tenant"]
+type = "string"
+help = "Tenant id."
+
+[commands.deploy.flags.deployment]
+env = "LL_DESKTOP_DEPLOYMENT_ID"
+aliases = ["deployment"]
+type = "string"
+help = "Immutable deployment/generation id."
+
+[commands.deploy.flags.module]
+env = "LL_DESKTOP_MODULE"
+aliases = ["module"]
+type = "string"
+help = "Path to the wasm32-wasip1 module."
+
+[commands.deploy.flags.ores-adapter]
+env = "LL_DESKTOP_ORES_ADAPTER"
+aliases = ["ores-adapter"]
+type = "string"
+help = "Optional ores.lambda.adapter/v1 JSON manifest to verify at deployment admission."
+
 [commands.invoke]
 help = "Invoke one fresh Lunatic WASM actor through the local daemon."
 
