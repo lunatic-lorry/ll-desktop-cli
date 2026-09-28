@@ -111,6 +111,7 @@ async fn run() -> Result<()> {
                 &module,
             )
             .await?;
+            let receipt_supplied = ores_evidence.is_some();
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
@@ -139,6 +140,7 @@ async fn run() -> Result<()> {
                 module.len(),
                 adapter_supplied,
             )?;
+            validate_receipt_ack(&value, receipt_supplied)?;
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
         "invoke" => {
@@ -276,6 +278,15 @@ fn validate_deploy_ack(
     if value.get("ores_adapter_verified").and_then(Value::as_bool) != Some(adapter_supplied) {
         bail!(
             "daemon deploy response adapter verification did not match whether an ORES adapter was supplied"
+        );
+    }
+    return Ok(());
+}
+
+fn validate_receipt_ack(value: &Value, receipt_supplied: bool) -> Result<()> {
+    if value.get("ores_receipt_verified").and_then(Value::as_bool) != Some(receipt_supplied) {
+        bail!(
+            "daemon deploy response receipt verification did not match whether ORES receipt evidence was supplied"
         );
     }
     return Ok(());
@@ -425,6 +436,15 @@ mod tests {
             "ores_adapter_verified": false
         });
         return validate_deploy_ack(&value, "tenant-a", "release-2", expected_sha256, 7, false);
+    }
+
+    #[test]
+    fn receipt_ack_requires_exact_verification_status() -> Result<()> {
+        validate_receipt_ack(&json!({"ores_receipt_verified": true}), true)?;
+        validate_receipt_ack(&json!({"ores_receipt_verified": false}), false)?;
+        assert!(validate_receipt_ack(&json!({"ores_receipt_verified": false}), true).is_err());
+        assert!(validate_receipt_ack(&json!({}), false).is_err());
+        return Ok(());
     }
 
     #[test]
