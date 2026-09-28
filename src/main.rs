@@ -314,6 +314,20 @@ fn validated_id(value: Option<String>, flag: &str) -> Result<String> {
     return Ok(value);
 }
 
+fn parse_literal_loopback_host(host: &str) -> Result<IpAddr> {
+    let normalized = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    let ip = normalized
+        .parse::<IpAddr>()
+        .context("daemon URL host must be a literal IP address")?;
+    if !ip.is_loopback() {
+        bail!("daemon URL must target a literal loopback address");
+    }
+    return Ok(ip);
+}
+
 fn validate_daemon_url(value: &str) -> Result<String> {
     let url = reqwest::Url::parse(value).context("daemon URL is invalid")?;
     if url.scheme() != "http" {
@@ -331,12 +345,7 @@ fn validate_daemon_url(value: &str) -> Result<String> {
     let host = url
         .host_str()
         .ok_or_else(|| anyhow!("daemon URL must contain a host"))?;
-    let ip = host
-        .parse::<IpAddr>()
-        .context("daemon URL host must be a literal IP address")?;
-    if !ip.is_loopback() {
-        bail!("daemon URL must target a literal loopback address");
-    }
+    let _ = parse_literal_loopback_host(host)?;
     return Ok(url.as_str().trim_end_matches('/').to_owned());
 }
 
