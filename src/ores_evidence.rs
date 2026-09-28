@@ -55,11 +55,23 @@ pub fn validate(
     let receipt: WasmArtifactReceipt =
         serde_json::from_slice(&receipt_bytes).context("ORES WASM receipt is not valid JSON")?;
 
-    require(&receipt.schema_version, RECEIPT_SCHEMA, "receipt schema_version")?;
+    require(
+        &receipt.schema_version,
+        RECEIPT_SCHEMA,
+        "receipt schema_version",
+    )?;
     require(&receipt.generated_by, "ores-stack", "receipt generated_by")?;
     require(&receipt.provider, expected_provider, "receipt provider")?;
-    require(&receipt.target_triple, expected_target, "receipt target_triple")?;
-    require(&receipt.adapter_contract, ADAPTER_SCHEMA, "receipt adapter_contract")?;
+    require(
+        &receipt.target_triple,
+        expected_target,
+        "receipt target_triple",
+    )?;
+    require(
+        &receipt.adapter_contract,
+        ADAPTER_SCHEMA,
+        "receipt adapter_contract",
+    )?;
     if receipt.deploy_mutation_performed {
         bail!("ORES WASM artifact receipt must be immutable build evidence");
     }
@@ -73,7 +85,11 @@ pub fn validate(
 
     require(adapter_schema, ADAPTER_SCHEMA, "adapter schema_version")?;
     require(adapter_provider, expected_provider, "adapter provider")?;
-    require(&receipt.provider, adapter_provider, "receipt/adapter provider")?;
+    require(
+        &receipt.provider,
+        adapter_provider,
+        "receipt/adapter provider",
+    )?;
     require(
         &receipt.runtime_repository,
         adapter_runtime_repository,
@@ -84,7 +100,11 @@ pub fn validate(
         adapter_runtime_contract,
         "receipt/adapter runtime_contract",
     )?;
-    require(&receipt.source_path, adapter_source, "receipt/adapter source")?;
+    require(
+        &receipt.source_path,
+        adapter_source,
+        "receipt/adapter source",
+    )?;
     require(
         &receipt.source_sha256,
         adapter_source_sha256,
@@ -109,7 +129,10 @@ pub fn validate(
         ("adapter_sha256", receipt.adapter_sha256.as_str()),
         ("source_sha256", receipt.source_sha256.as_str()),
         ("wrapper_sha256", receipt.wrapper_sha256.as_str()),
-        ("unit_manifest_sha256", receipt.unit_manifest_sha256.as_str()),
+        (
+            "unit_manifest_sha256",
+            receipt.unit_manifest_sha256.as_str(),
+        ),
     ] {
         validate_sha256(digest, label)?;
     }
