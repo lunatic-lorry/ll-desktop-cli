@@ -39,6 +39,12 @@ aliases = ["ores-adapter"]
 type = "string"
 help = "Optional ores.lambda.adapter/v1 JSON manifest to verify at deployment admission."
 
+[commands.deploy.flags.ores-receipt]
+env = "LL_DESKTOP_ORES_RECEIPT"
+aliases = ["ores-receipt"]
+type = "string"
+help = "Optional ores.lambda.wasm-artifact.receipt/v1 file; when supplied, bind the uploaded module and adapter bytes to the ORES build receipt before daemon mutation."
+
 [commands.invoke]
 help = "Invoke one fresh Lunatic WASM actor through the local daemon."
 
