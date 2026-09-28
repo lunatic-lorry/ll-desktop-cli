@@ -98,6 +98,7 @@ async fn run() -> Result<()> {
             }
             let ores_adapter =
                 read_optional_ores_adapter(config.LL_DESKTOP_ORES_ADAPTER.as_deref()).await?;
+            let adapter_supplied = ores_adapter.is_some();
             let body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
@@ -112,15 +113,14 @@ async fn run() -> Result<()> {
                 .send()
                 .await?;
             let value = read_json_response(response).await?;
-            let actual_sha256 = value
-                .get("sha256")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("daemon deploy response omitted sha256"))?;
-            if actual_sha256 != expected_sha256 {
-                bail!(
-                    "daemon deploy digest mismatch: expected {expected_sha256}, got {actual_sha256}"
-                );
-            }
+            validate_deploy_ack(
+                &value,
+                &tenant_id,
+                &deployment_id,
+                &expected_sha256,
+                module.len(),
+                adapter_supplied,
+            )?;
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
         "invoke" => {
@@ -197,6 +197,36 @@ async fn read_json_response(mut response: reqwest::Response) -> Result<Value> {
 async fn print_response(response: reqwest::Response) -> Result<()> {
     let value = read_json_response(response).await?;
     println!("{}", serde_json::to_string_pretty(&value)?);
+    return Ok(());
+}
+
+fn validate_deploy_ack(
+    value: &Value,
+    tenant_id: &str,
+    deployment_id: &str,
+    expected_sha256: &str,
+    expected_module_bytes: usize,
+    adapter_supplied: bool,
+) -> Result<()> {
+    if value.get("tenant_id").and_then(Value::as_str) != Some(tenant_id) {
+        bail!("daemon deploy response tenant_id did not match the requested tenant");
+    }
+    if value.get("deployment_id").and_then(Value::as_str) != Some(deployment_id) {
+        bail!("daemon deploy response deployment_id did not match the requested deployment");
+    }
+    if value.get("sha256").and_then(Value::as_str) != Some(expected_sha256) {
+        bail!("daemon deploy response sha256 did not match the uploaded module");
+    }
+    let expected_module_bytes = u64::try_from(expected_module_bytes)
+        .map_err(|_| anyhow!("module byte length does not fit in u64"))?;
+    if value.get("module_bytes").and_then(Value::as_u64) != Some(expected_module_bytes) {
+        bail!("daemon deploy response module_bytes did not match the uploaded module");
+    }
+    if value.get("ores_adapter_verified").and_then(Value::as_bool) != Some(adapter_supplied) {
+        bail!(
+            "daemon deploy response adapter verification did not match whether an ORES adapter was supplied"
+        );
+    }
     return Ok(());
 }
 
@@ -294,10 +324,57 @@ fn read_token() -> Result<String> {
     return Ok(token.to_owned());
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deploy_ack_binds_exact_requested_identity() -> Result<()> {
+        let expected_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let good = json!({
+            "tenant_id": "tenant-a",
+            "deployment_id": "release-1",
+            "sha256": expected_sha256,
+            "module_bytes": 42,
+            "ores_adapter_verified": true
+        });
+        validate_deploy_ack(&good, "tenant-a", "release-1", expected_sha256, 42, true)?;
+
+        for field in ["tenant_id", "deployment_id", "sha256"] {
+            let mut bad = good.clone();
+            bad[field] = Value::String("wrong".to_owned());
+            assert!(
+                validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,)
+                    .is_err()
+            );
+        }
+
+        let mut bad = good.clone();
+        bad["module_bytes"] = Value::from(41_u64);
+        assert!(
+            validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,).is_err()
+        );
+
+        let mut bad = good;
+        bad["ores_adapter_verified"] = Value::Bool(false);
+        assert!(
+            validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,).is_err()
+        );
+        return Ok(());
+    }
+
+    #[test]
+    fn deploy_ack_without_adapter_requires_unverified_status() -> Result<()> {
+        let expected_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let value = json!({
+            "tenant_id": "tenant-a",
+            "deployment_id": "release-2",
+            "sha256": expected_sha256,
+            "module_bytes": 7,
+            "ores_adapter_verified": false
+        });
+        return validate_deploy_ack(&value, "tenant-a", "release-2", expected_sha256, 7, false);
+    }
 
     #[test]
     fn daemon_url_rejects_remote_plaintext_and_embedded_credentials() -> Result<()> {
