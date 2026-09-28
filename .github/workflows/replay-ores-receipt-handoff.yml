@@ -57,6 +57,26 @@ jobs:
               raise SystemExit('evidence helper insertion point drifted')
           text = text.replace(marker, helper + marker, 1)
           path.write_text(text)
+
+          evidence_path = Path('src/ores_evidence.rs')
+          evidence = evidence_path.read_text()
+          evidence = evidence.replace('    pub adapter_value: Value,\n', '', 1)
+          evidence = evidence.replace('        adapter_value,\n        adapter_bytes,', '        adapter_bytes,', 1)
+          evidence = evidence.replace(
+              '    fn receipt_bytes(adapter: &[u8], module: &[u8]) -> Vec<u8> {\n        return serde_json::to_vec(',
+              '    fn receipt_bytes(adapter: &[u8], module: &[u8]) -> Result<Vec<u8>> {\n        return Ok(serde_json::to_vec(',
+              1,
+          )
+          evidence = evidence.replace(
+              '        }))\n        .expect("receipt JSON");\n',
+              '        })?)\n    }\n',
+              1,
+          )
+          evidence = evidence.replace('        let receipt = receipt_bytes(&adapter, module);\n', '        let receipt = receipt_bytes(&adapter, module)?;\n', 1)
+          evidence = evidence.replace('    fn receipt_rejects_module_or_raw_adapter_drift() {\n', '    fn receipt_rejects_module_or_raw_adapter_drift() -> Result<()> {\n', 1)
+          evidence = evidence.replace('        let receipt = receipt_bytes(&adapter, b"wasm-module");\n', '        let receipt = receipt_bytes(&adapter, b"wasm-module")?;\n', 1)
+          evidence = evidence.replace('            .is_err()\n        );\n    }\n}\n', '            .is_err()\n        );\n        return Ok(());\n    }\n}\n', 1)
+          evidence_path.write_text(evidence)
           PY
           cargo fmt --all
           cargo test --all-targets
