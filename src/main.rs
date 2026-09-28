@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 const MAX_MODULE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ORES_ADAPTER_BYTES: usize = 1024 * 1024;
+const MAX_ORES_RECEIPT_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 #[allow(non_snake_case)]
@@ -20,6 +21,7 @@ struct CliConfig {
     LL_DESKTOP_DEPLOYMENT_ID: Option<String>,
     LL_DESKTOP_MODULE: Option<String>,
     LL_DESKTOP_ORES_ADAPTER: Option<String>,
+    LL_DESKTOP_ORES_RECEIPT: Option<String>,
     LL_DESKTOP_PAYLOAD: Option<Value>,
     FLAGS2ENV_COMMAND: Option<String>,
 }
@@ -99,13 +101,21 @@ async fn run() -> Result<()> {
             let ores_adapter =
                 read_optional_ores_adapter(config.LL_DESKTOP_ORES_ADAPTER.as_deref()).await?;
             let adapter_supplied = ores_adapter.is_some();
+            let expected_sha256 = format!("{:x}", Sha256::digest(&module));
+            validate_optional_ores_receipt(
+                config.LL_DESKTOP_ORES_RECEIPT.as_deref(),
+                "lunatic_lorry",
+                "lunatic-lorry.lambda-runtime/v1",
+                &expected_sha256,
+                ores_adapter.as_ref().map(|adapter| adapter.sha256.as_str()),
+            )
+            .await?;
             let body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
                 "wasm_base64": BASE64.encode(&module),
-                "ores_adapter": ores_adapter,
+                "ores_adapter": ores_adapter.as_ref().map(|adapter| &adapter.value),
             });
-            let expected_sha256 = format!("{:x}", Sha256::digest(&module));
             let response = client
                 .post(format!("{base}/v1/deploy"))
                 .bearer_auth(&token)
@@ -148,7 +158,13 @@ async fn run() -> Result<()> {
     return Ok(());
 }
 
-async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>> {
+#[derive(Debug)]
+struct OresAdapterInput {
+    value: Value,
+    sha256: String,
+}
+
+async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<OresAdapterInput>> {
     let Some(path) = path else {
         return Ok(None);
     };
@@ -158,7 +174,11 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>>
     let bytes = tokio::fs::read(path)
         .await
         .with_context(|| format!("cannot read ORES adapter at {path}"))?;
-    return parse_ores_adapter_bytes(&bytes).map(Some);
+    let value = parse_ores_adapter_bytes(&bytes)?;
+    return Ok(Some(OresAdapterInput {
+        value,
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+    }));
 }
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
@@ -170,6 +190,62 @@ fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
         bail!("ORES adapter must be a JSON object");
     }
     return Ok(value);
+}
+
+async fn validate_optional_ores_receipt(
+    path: Option<&str>,
+    provider: &str,
+    runtime_contract: &str,
+    artifact_sha256: &str,
+    adapter_sha256: Option<&str>,
+) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if path.trim().is_empty() {
+        bail!("--ores-receipt must name a readable JSON file");
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("cannot read ORES receipt at {path}"))?;
+    if bytes.is_empty() || bytes.len() > MAX_ORES_RECEIPT_BYTES {
+        bail!("ORES receipt must be between 1 and {MAX_ORES_RECEIPT_BYTES} bytes");
+    }
+    let value: Value =
+        serde_json::from_slice(&bytes).context("ORES receipt is not valid JSON")?;
+    if value.get("schema_version").and_then(Value::as_str)
+        != Some("ores.lambda.wasm-artifact.receipt/v1")
+    {
+        bail!("ORES receipt schema_version is not ores.lambda.wasm-artifact.receipt/v1");
+    }
+    if value.get("provider").and_then(Value::as_str) != Some(provider) {
+        bail!("ORES receipt provider does not match the selected runtime");
+    }
+    if value.get("runtime_contract").and_then(Value::as_str) != Some(runtime_contract) {
+        bail!("ORES receipt runtime_contract does not match the selected runtime");
+    }
+    if value.get("artifact_sha256").and_then(Value::as_str) != Some(artifact_sha256) {
+        bail!("ORES receipt artifact_sha256 does not match the uploaded module");
+    }
+    if value.get("adapter_contract").and_then(Value::as_str) != Some("ores.lambda.adapter/v1") {
+        bail!("ORES receipt adapter_contract is not ores.lambda.adapter/v1");
+    }
+    if value
+        .get("deploy_mutation_performed")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        bail!("ORES receipt must prove deploy_mutation_performed=false");
+    }
+    match adapter_sha256 {
+        Some(expected) => {
+            if value.get("adapter_sha256").and_then(Value::as_str) != Some(expected) {
+                bail!("ORES receipt adapter_sha256 does not match --ores-adapter bytes");
+            }
+        }
+        None => bail!("--ores-receipt requires --ores-adapter so its digest can be verified"),
+    }
+    Ok(())
 }
 
 async fn read_json_response(mut response: reqwest::Response) -> Result<Value> {
@@ -408,6 +484,47 @@ mod tests {
         assert!(parse_ores_adapter_bytes(b"[]").is_err());
         assert!(parse_ores_adapter_bytes(b"").is_err());
         return Ok(());
+    }
+
+    #[tokio::test]
+    async fn ores_receipt_binds_module_and_adapter_digests() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("receipt.json");
+        let adapter_sha = "b".repeat(64);
+        let artifact_sha = "a".repeat(64);
+        tokio::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": "ores.lambda.wasm-artifact.receipt/v1",
+                "provider": "lunatic_lorry",
+                "runtime_contract": "lunatic-lorry.lambda-runtime/v1",
+                "adapter_contract": "ores.lambda.adapter/v1",
+                "artifact_sha256": artifact_sha,
+                "adapter_sha256": adapter_sha,
+                "deploy_mutation_performed": false
+            }))?,
+        )
+        .await?;
+        validate_optional_ores_receipt(
+            path.to_str(),
+            "lunatic_lorry",
+            "lunatic-lorry.lambda-runtime/v1",
+            &"a".repeat(64),
+            Some(&"b".repeat(64)),
+        )
+        .await?;
+        assert!(
+            validate_optional_ores_receipt(
+                path.to_str(),
+                "lunatic_lorry",
+                "lunatic-lorry.lambda-runtime/v1",
+                &"c".repeat(64),
+                Some(&"b".repeat(64)),
+            )
+            .await
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]
