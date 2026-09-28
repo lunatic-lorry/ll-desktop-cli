@@ -1,3 +1,5 @@
+mod ores_evidence;
+
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flags2env::BundledFlags2Env;
@@ -20,6 +22,7 @@ struct CliConfig {
     LL_DESKTOP_DEPLOYMENT_ID: Option<String>,
     LL_DESKTOP_MODULE: Option<String>,
     LL_DESKTOP_ORES_ADAPTER: Option<String>,
+    LL_DESKTOP_ORES_RECEIPT: Option<String>,
     LL_DESKTOP_PAYLOAD: Option<Value>,
     FLAGS2ENV_COMMAND: Option<String>,
 }
@@ -51,7 +54,10 @@ async fn run() -> Result<()> {
         .parse_structured(&argv, Some(config_path_text))
         .map_err(|error| anyhow!("flags-2-env parse failed: {error}"))?;
     if !parsed.unknown_options.is_empty() {
-        bail!("unknown command-line options: {}", parsed.unknown_options.len());
+        bail!(
+            "unknown command-line options: {}",
+            parsed.unknown_options.len()
+        );
     }
     if !parsed.errors.is_empty() {
         bail!("invalid command-line values: {}", parsed.errors.join("; "));
@@ -96,15 +102,27 @@ async fn run() -> Result<()> {
             if module.is_empty() || module.len() > MAX_MODULE_BYTES {
                 bail!("module must be between 1 and {MAX_MODULE_BYTES} bytes");
             }
-            let ores_adapter =
-                read_optional_ores_adapter(config.LL_DESKTOP_ORES_ADAPTER.as_deref()).await?;
+            let ores_adapter_path = config.LL_DESKTOP_ORES_ADAPTER.as_deref();
+            let ores_adapter = read_optional_ores_adapter(ores_adapter_path).await?;
             let adapter_supplied = ores_adapter.is_some();
-            let body = json!({
+            let ores_evidence = read_optional_ores_evidence(
+                ores_adapter_path,
+                config.LL_DESKTOP_ORES_RECEIPT.as_deref(),
+                &module,
+            )
+            .await?;
+            let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
                 "wasm_base64": BASE64.encode(&module),
                 "ores_adapter": ores_adapter,
             });
+            if let Some(evidence) = ores_evidence {
+                body["ores_adapter_raw_base64"] =
+                    Value::String(BASE64.encode(&evidence.adapter_bytes));
+                body["ores_receipt_raw_base64"] =
+                    Value::String(BASE64.encode(&evidence.receipt_bytes));
+            }
             let expected_sha256 = format!("{:x}", Sha256::digest(&module));
             let response = client
                 .post(format!("{base}/v1/deploy"))
@@ -159,6 +177,39 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>>
         .await
         .with_context(|| format!("cannot read ORES adapter at {path}"))?;
     return parse_ores_adapter_bytes(&bytes).map(Some);
+}
+
+async fn read_optional_ores_evidence(
+    adapter_path: Option<&str>,
+    receipt_path: Option<&str>,
+    module_bytes: &[u8],
+) -> Result<Option<ores_evidence::CheckedOresEvidence>> {
+    let Some(receipt_path) = receipt_path else {
+        return Ok(None);
+    };
+    let adapter_path = adapter_path
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!("--ores-receipt requires --ores-adapter"))?;
+    if receipt_path.trim().is_empty() {
+        bail!("--ores-receipt must name a readable JSON file");
+    }
+    let adapter_bytes = tokio::fs::read(adapter_path)
+        .await
+        .with_context(|| format!("cannot read ORES adapter at {adapter_path}"))?;
+    if adapter_bytes.is_empty() || adapter_bytes.len() > MAX_ORES_ADAPTER_BYTES {
+        bail!("ORES adapter must be between 1 and {MAX_ORES_ADAPTER_BYTES} bytes");
+    }
+    let receipt_bytes = tokio::fs::read(receipt_path)
+        .await
+        .with_context(|| format!("cannot read ORES receipt at {receipt_path}"))?;
+    let evidence = ores_evidence::validate(
+        adapter_bytes,
+        receipt_bytes,
+        module_bytes,
+        "lunatic_lorry",
+        "wasm32-wasip1",
+    )?;
+    return Ok(Some(evidence));
 }
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
