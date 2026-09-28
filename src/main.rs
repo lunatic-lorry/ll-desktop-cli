@@ -488,8 +488,10 @@ mod tests {
 
     #[tokio::test]
     async fn ores_receipt_binds_module_and_adapter_digests() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("receipt.json");
+        let path = env::temp_dir().join(format!(
+            "ll-desktop-receipt-{}.json",
+            Uuid::new_v4()
+        ));
         let adapter_sha = "b".repeat(64);
         let artifact_sha = "a".repeat(64);
         tokio::fs::write(
@@ -524,6 +526,7 @@ mod tests {
             .await
             .is_err()
         );
+        let _ = tokio::fs::remove_file(&path).await;
         Ok(())
     }
 
