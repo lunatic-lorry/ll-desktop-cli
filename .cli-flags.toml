@@ -12,6 +12,9 @@ ignore = ["LL_DESKTOP_TOKEN_FILE"]
 [commands.status]
 help = "Show Lunatic Lorry local daemon status."
 
+[commands.self-update]
+help = "Update ll-desktop-cli using the shared ORES self-update path."
+
 [commands.deploy]
 help = "Deploy one immutable Lunatic WebAssembly module to the local daemon."
 
