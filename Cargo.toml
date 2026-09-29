@@ -7,12 +7,12 @@ description = "Rust desktop control client for Lunatic-Lorry"
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 flags2env = { git = "https://github.com/flags-2-env/flags-2-env.git", rev = "8c8465561075a8d7ebb58074b3a8087138e97d8f" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
 
