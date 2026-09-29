@@ -114,7 +114,7 @@ async fn run() -> Result<()> {
             )
             .await?;
             let receipt_supplied = ores_evidence.is_some();
-            let expected_sha256 = format!("{:x}", Sha256::digest(&module));
+            let expected_sha256 = sha256_hex(&module);
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
@@ -214,6 +214,17 @@ async fn read_optional_ores_evidence(
         "wasm32-wasip1",
     )?;
     return Ok(Some(evidence));
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    return encoded;
 }
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
@@ -506,7 +517,11 @@ mod tests {
 
     #[test]
     fn module_digest_is_lowercase_sha256() {
-        let digest = format!("{:x}", Sha256::digest(b"lunatic-lorry"));
+        let digest = sha256_hex(b"lunatic-lorry");
+        assert_eq!(
+            digest,
+            "9997020d1e6e63b4660cab678541f16699f20c067711972039a555d6afa4049b"
+        );
         assert_eq!(digest.len(), 64);
         assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert_eq!(digest, digest.to_ascii_lowercase());
