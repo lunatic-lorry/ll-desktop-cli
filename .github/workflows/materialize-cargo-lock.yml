@@ -53,3 +53,5 @@ jobs:
           git add Cargo.lock .github/workflows/ci.yml
           git commit -m 'hardening: pin CLI dependency graph and enforce locked CI'
           git push origin HEAD:hardening/pin-cargo-lock-20260930
+
+# Triggered after workflow registration so the branch push is evaluated by Actions.
